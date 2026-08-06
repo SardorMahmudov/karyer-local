@@ -192,6 +192,18 @@ class VideoZoneDetector:
             return ""
         return _COCO_VTYPE.get(int(cls), "")
 
+    def latest_jpeg(self, max_age_s=6.0):
+        """Bufferdagi ENG SO'NGGI kadr (JPEG bytes) — live-snapshot uchun.
+        Faqat buferdan o'qiydi: oqim/YOLO ishiga mutlaqo ta'sir qilmaydi.
+        Kadr max_age_s dan eski bo'lsa None (oqim uzilgan — eski rasm ko'rsatmaymiz)."""
+        with self._buf_lock:
+            if not self._buf:
+                return None
+            bts, jpg = self._buf[-1]
+        if time.time() - bts > max_age_s:
+            return None
+        return jpg
+
     def grab_frame(self, ts, tol=4.0):
         """Bufferdan ts vaqtiga eng yaqin kadrni (JPEG bytes) qaytaradi.
         Aktiv snapshot (kamera sekin bo'lsa mashina ketib bo'ladi) o'rniga —

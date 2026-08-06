@@ -51,6 +51,10 @@ def default_scale():
         "type": "serial",          # serial | tcp | sim
         "port": "COM3",            # serial uchun
         "baud": 9600,
+        # KELI indikatorining parity sozlamasiga mos kelishi SHART:
+        # indikator EvEn bo'lsa -> bytesize:7, parity:"E" (7E1);
+        # nonE bo'lsa -> 8/"N". Nomuvofiq bo'lsa baytlar buziladi (frame kelmaydi).
+        "bytesize": 8, "parity": "N",
         "tcp_host": "", "tcp_port": 0,   # tcp uchun
         # --- vazn mantig'i (TZ 4a) ---
         "min_weight": 500,         # mashina bor deb hisoblash chegarasi (kg)
@@ -90,6 +94,16 @@ def default_media():
     }
 
 
+def default_live():
+    """Jonli ko'rish (server orqali) — DEFAULT O'CHIQ. Server tomonida
+    heartbeat/live endpointlari tayyor bo'lgach enabled=true qilinadi.
+    O'chiq holatda heartbeat ham, live uzatish ham UMUMAN ishlamaydi."""
+    return {
+        "enabled": False,
+        "heartbeat_interval_s": 15,
+    }
+
+
 def default_config():
     return {
         "quarry_id": "",
@@ -100,6 +114,7 @@ def default_config():
                    # tuzatgach (material seed) true qilinadi.
                    "send_images": True},
         "media": default_media(),
+        "live": default_live(),
         "stations": [],
         # umumiy papkalar
         "save_dir": "captures",

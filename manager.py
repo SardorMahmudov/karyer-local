@@ -112,6 +112,8 @@ class StationManager:
         self.sender = None
         self.running = False
         self.quarry_id = ""
+        self.live = None        # LiveManager (live.enabled=true bo'lsagina)
+        self.heartbeat = None   # HeartbeatSender
 
     def start_all(self, cfg=None):
         """config bo'yicha stansiyalar + outboxni ishga tushiradi."""
@@ -142,6 +144,22 @@ class StationManager:
             self.stations.append(st)
 
         self.running = True
+
+        # --- LIVE (ixtiyoriy, default O'CHIQ) -------------------------------
+        # live.enabled=false bo'lsa hech narsa ishga tushmaydi; har qanday
+        # xato asosiy oqimni (stansiyalar/outbox) buza olmasligi uchun try ichida.
+        try:
+            if (cfg.get("live") or {}).get("enabled"):
+                from live_manager import LiveManager
+                from heartbeat import HeartbeatSender
+                self.live = LiveManager(cfg, self.stations)
+                self.heartbeat = HeartbeatSender(cfg, self, self.live)
+                self.heartbeat.start()
+        except Exception as e:
+            print(f"[live] modul ishga tushmadi (asosiy ishga ta'sir yo'q): {e}")
+            self.live = None
+            self.heartbeat = None
+
         print(f"✅ {len(self.stations)} ta stansiya ishlayapti | "
               f"karyer={self.quarry_id} | {'SIM' if self.sim else 'REAL'} rejim")
         return len(self.stations)
@@ -150,6 +168,18 @@ class StationManager:
         """Barcha stansiyalar va outboxni to'xtatadi."""
         if not self.running:
             return
+        if self.heartbeat:
+            try:
+                self.heartbeat.stop()
+            except Exception:
+                pass
+            self.heartbeat = None
+        if self.live:
+            try:
+                self.live.stop_all()
+            except Exception:
+                pass
+            self.live = None
         for st in self.stations:
             try:
                 st.stop()

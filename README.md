@@ -79,6 +79,22 @@ scale_capture.py   KELI D12 formatini aniqlash vositasi
 
 ## Holat
 - ✅ Bosqich 1: poydevor — simulyator bilan uchidan-uchiga ishlaydi
-- ⏳ Bosqich 2: real KELI D12 — `scale_capture.py` natijasi kutilmoqda
-  (USB-RS232 adapter kelgach ishga tushiriladi, log menga yuboriladi)
-- ⏳ Bosqich 3: server API kelishilgach `config.json → server` yoqiladi
+- ✅ Bosqich 2: real KELI D12 ulangan (COM, STX/ETX frame). DIQQAT: indikator
+  parity'si EvEn bo'lsa config'da `scale.bytesize: 7, scale.parity: "E"` (7E1)
+  qilinishi shart — 8N1 bilan baytlar buziladi. Default 8N1 (nonE).
+- ✅ Bosqich 3: server API ishlayapti (`/api/weigh`, X-API-Key, outbox retry)
+
+## Live (jonli ko'rish) — hozircha O'CHIQ
+`heartbeat.py` + `live_manager.py` — server orqali jonli ko'rish (snapshot yoki
+MediaMTX video push). Server tomonida `/api/local/heartbeat` va
+`/api/local/live-snapshot` endpointlari tayyor bo'lgach `config.json`ga:
+```json
+"live": { "enabled": true, "heartbeat_interval_s": 15 }
+```
+qo'shiladi (default o'chiq — yoqilmaguncha bu modullar umuman ishlamaydi).
+Buyruqlar heartbeat JAVOBIDA keladi (localga tashqaridan kirish yo'q):
+server so'ragan kamera uchun TTL bilan sessiya ochiladi — snapshot rejimda
+detektorning tayyor JPEG buferidan kadr yuboriladi (yangi RTSP sessiyasiz),
+video rejimda ffmpeg SUB-oqimni `-c copy` bilan push qiladi. Hodisa navbati
+bo'sh bo'lmaguncha live to'xtab turadi (hodisa > jonli — o'zgarmas qoida).
+To'liq loyiha: `..\MUVOFIQLIK-VA-LIVE-STREAM.md`

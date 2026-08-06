@@ -112,6 +112,8 @@ def _merge_camera(station, cam):
 
     block = "anpr" if cam.get("kind") == "plate" else "video"
     conn = station.setdefault(block, {})
+    # server kamera kodi — live-stream so'rovlarini kameraga bog'lash uchun
+    _set_if(conn, "code", cam.get("code"))
     _set_if(conn, "brand", cam.get("brand"))
     _set_if(conn, "ip", ip)
     _set_if(conn, "login", cam.get("login"))

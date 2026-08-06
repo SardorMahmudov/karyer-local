@@ -19,11 +19,19 @@ _NUM_RE = re.compile(rb"([+-]?\d+(?:\.\d+)?)")
 class SerialScaleReader(ScaleReader):
     def _open(self):
         import serial
+        # KELI D12 indikatorining o'zida parity sozlanadi (nonE/EvEn/odd).
+        # Indikator EvEn (7E1) yuborsa 8N1 bilan o'qish baytlarni buzadi
+        # (parity biti 8-bit sifatida o'qiladi) — shuning uchun config'dan:
+        #   "bytesize": 7, "parity": "E"   -> 7E1 (KELI zavod holati ko'p uchraydi)
+        #   default: 8 / "N"               -> 8N1 (hozirgi ishlab turgan holat)
+        bits = {7: serial.SEVENBITS, 8: serial.EIGHTBITS}
+        par = {"N": serial.PARITY_NONE, "E": serial.PARITY_EVEN, "O": serial.PARITY_ODD}
         return serial.Serial(
             self.cfg.get("port", "COM3"),
             self.cfg.get("baud", 9600),
-            bytesize=serial.EIGHTBITS,
-            parity=serial.PARITY_NONE,
+            bytesize=bits.get(int(self.cfg.get("bytesize", 8)), serial.EIGHTBITS),
+            parity=par.get(str(self.cfg.get("parity", "N")).upper()[:1],
+                           serial.PARITY_NONE),
             stopbits=serial.STOPBITS_ONE,
             timeout=0.3,
         )
@@ -70,7 +78,8 @@ class SerialScaleReader(ScaleReader):
                 time.sleep(5)
                 continue
 
-            print(f"[scale] Ulandi: {self.cfg.get('port')} @ {self.cfg.get('baud')}")
+            print(f"[scale] Ulandi: {self.cfg.get('port')} @ {self.cfg.get('baud')} "
+                  f"{self.cfg.get('bytesize', 8)}{str(self.cfg.get('parity', 'N')).upper()[:1]}1")
             buf.clear()   # qayta ulanishda eski chala baytlar aralashmasin
             try:
                 while self._running:
