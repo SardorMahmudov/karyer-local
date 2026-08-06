@@ -95,12 +95,15 @@ def default_media():
 
 
 def default_live():
-    """Jonli ko'rish (server orqali) — DEFAULT O'CHIQ. Server tomonida
-    heartbeat/live endpointlari tayyor bo'lgach enabled=true qilinadi.
-    O'chiq holatda heartbeat ham, live uzatish ham UMUMAN ishlamaydi."""
+    """Jonli ko'rish (server orqali) — DEFAULT O'CHIQ.
+
+    Yoqish: adminkada (karyer sahifasi -> Agent) token olinadi (KRY_...) va:
+      "live": {"enabled": true, "agent_token": "KRY_..."}
+    Interval/sifat/yoqish-o'chirish serverdan boshqariladi (GET /api/agent/config
+    va heartbeat javobi). O'chiq holatda bu modullar UMUMAN ishlamaydi."""
     return {
         "enabled": False,
-        "heartbeat_interval_s": 15,
+        "agent_token": "",
     }
 
 

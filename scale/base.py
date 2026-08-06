@@ -31,6 +31,7 @@ class ScaleReader:
         self._callback = None
         self._thread = None
         self._running = False
+        self.last_ts = 0.0   # so'nggi o'qish vaqti — heartbeat scale_ok uchun
 
     def start(self, callback):
         self._callback = callback
@@ -42,6 +43,7 @@ class ScaleReader:
         self._running = False
 
     def _emit(self, reading):
+        self.last_ts = reading.ts
         if self._callback:
             self._callback(reading)
 

@@ -85,16 +85,23 @@ scale_capture.py   KELI D12 formatini aniqlash vositasi
 - ✅ Bosqich 3: server API ishlayapti (`/api/weigh`, X-API-Key, outbox retry)
 
 ## Live (jonli ko'rish) — hozircha O'CHIQ
-`heartbeat.py` + `live_manager.py` — server orqali jonli ko'rish (snapshot yoki
-MediaMTX video push). Server tomonida `/api/local/heartbeat` va
-`/api/local/live-snapshot` endpointlari tayyor bo'lgach `config.json`ga:
+`heartbeat.py` + `live_manager.py` — server (raqamli-karyer) orqali jonli
+ko'rish. Server kontrakti: `/api/agent/heartbeat`, `/api/agent/config`,
+`/api/agent/live-snapshot` (`Authorization: Bearer <agent-token>`).
+
+Yoqish (server allaqachon tayyor):
+1. Adminkada karyer sahifasi -> Agent -> token generatsiya (KRY_...)
+2. `config.json`ga:
 ```json
-"live": { "enabled": true, "heartbeat_interval_s": 15 }
+"live": { "enabled": true, "agent_token": "KRY_..." }
 ```
-qo'shiladi (default o'chiq — yoqilmaguncha bu modullar umuman ishlamaydi).
-Buyruqlar heartbeat JAVOBIDA keladi (localga tashqaridan kirish yo'q):
-server so'ragan kamera uchun TTL bilan sessiya ochiladi — snapshot rejimda
-detektorning tayyor JPEG buferidan kadr yuboriladi (yangi RTSP sessiyasiz),
-video rejimda ffmpeg SUB-oqimni `-c copy` bilan push qiladi. Hodisa navbati
-bo'sh bo'lmaguncha live to'xtab turadi (hodisa > jonli — o'zgarmas qoida).
-To'liq loyiha: `..\MUVOFIQLIK-VA-LIVE-STREAM.md`
+3. Tray'dan restart.
+
+Boshqaruv serverda: adminkada `live_stream_enabled` / `video_quality`
+o'zgartiriladi, agent heartbeat javobidan oladi. `snapshot`/`auto` —
+detektorning tayyor JPEG buferidan kadr (yangi RTSP sessiyasiz, 144 kbps'da
+ham ishlaydi); `low/medium/high` — ffmpeg SUB-oqimni MediaMTX'ga `-c copy`
+push (manzil serverdagi configdan keladi). Hodisa navbati bo'sh bo'lmaguncha
+live kutadi (hodisa > jonli — o'zgarmas qoida).
+To'liq tahlil: `..\MUVOFIQLIK-VA-LIVE-STREAM.md` (server o'z variantini
+amalga oshirdi — doc.txt kontrakti; ushbu kod aynan o'shanga mos).

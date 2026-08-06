@@ -1,21 +1,24 @@
 #!/usr/bin/env python3
 """
-LiveManager — serverdan kelgan (heartbeat javobidagi) jonli ko'rish
-so'rovlarini bajaradi. Ikki rejim:
+LiveManager — jonli ko'rish (server sozlamasi bilan boshqariladi).
 
-  snapshot : detektorning MAVJUD JPEG buferidan so'nggi kadr olinadi va
-             POST /api/local/live-snapshot ga yuboriladi. Kameraga YANGI
-             RTSP sessiya ochilmaydi, CPU ~0 — 144 kbps internetda ham ishlaydi.
-  video    : ffmpeg SUB-oqimni transkodlashsiz (-c copy) serverdagi
-             MediaMTX'ga push qiladi.
+Server kontrakti (raqamli-karyer, backend/app/api/agent.py + services/live.py):
+  * adminkada live_stream_enabled / video_quality o'zgartiriladi;
+  * agent buni heartbeat javobidagi config'dan oladi va shu yerga uzatadi;
+  * snapshot rejim: POST /api/agent/live-snapshot (Bearer, X-Camera-Id, JPEG);
+  * video rejim: ffmpeg SUB-oqimni MediaMTX'ga push qiladi — manzil
+    GET /api/agent/config -> live_stream.push_url / path_template
+    (yo'l: karyer_<kod>_<kamera>, login-parol URL ichida).
 
-Har so'rov TTL bilan keladi; server so'rovni yangilab turmasa (tomoshabin
-ketdi) sessiya o'zi to'xtaydi. USTUVORLIK: outbox'da yuborilmagan hodisa
-bo'lsa snapshot yuborish to'xtab turadi, video sessiya boshlanmaydi —
-hodisa har doim jonli ko'rinishdan muhim.
+Rejim tanlash (video_quality):
+  "snapshot" yoki "auto" -> JPEG kadrlar (detektor buferidan, yangi RTSP
+      sessiyasiz — 144 kbps kanalda ham ishlaydi; "auto"da kanal o'lchash
+      keyingi versiyada, hozircha xavfsiz tomonga: snapshot).
+  "low"/"medium"/"high" -> MediaMTX push (SUB-oqim -c copy, transkodlashsiz —
+      profil bitrate'lari kamera SUB sozlamasi bilan belgilanadi).
 
-MUHIM: bu modul faqat heartbeat orqali (live.enabled=true) chaqiriladi;
-o'chiq holatda umuman ishlamaydi.
+USTUVORLIK: outbox'da yuborilmagan hodisa bo'lsa snapshot to'xtab turadi,
+video push boshlanmaydi — hodisa har doim jonli ko'rinishdan muhim.
 """
 
 import time
@@ -30,126 +33,142 @@ except ImportError:
 import db
 import media
 
-# hodisa navbati bo'shashini kutish (video sessiya boshlashdan oldin)
+SNAPSHOT_INTERVAL_S = 3
 QUEUE_WAIT_S = 5
-# ffmpeg o'z-o'zidan o'lsa qayta urinish oralig'i
 FFMPEG_RETRY_S = 5
+VIDEO_QUALITIES = ("low", "medium", "high")
 
 
 class _Session:
-    def __init__(self, camera_code, mode):
-        self.camera_code = camera_code
+    def __init__(self, camera_id, mode):
+        self.camera_id = camera_id
         self.mode = mode          # "snapshot" | "video"
-        self.until = 0.0          # TTL muddati (epoch)
+        self.active = True        # False -> thread o'zi chiqadi
         self.thread = None
-        self.proc = None          # video rejimda ffmpeg jarayoni
-        self.publish_url = ""
-        self.snapshot_interval = 3.0
+        self.proc = None
 
 
 class LiveManager:
     def __init__(self, cfg, stations):
         server = cfg.get("server", {}) or {}
+        live = cfg.get("live", {}) or {}
         self.url = (server.get("url") or "").rstrip("/")
-        self.api_key = server.get("api_key", "")
+        self.token = (live.get("agent_token") or "").strip()
         self.stations = stations
-        self._sessions = {}       # camera_code -> _Session
+        self._sessions = {}       # camera_id -> _Session
         self._lock = threading.Lock()
+        self._live_stream = None  # {push_url, path_template}
+        self._quality = ""
 
-    # ------------------------------------------------------------------ jamoat
-    def handle_requests(self, live_requests):
-        """Heartbeat javobidagi so'rovlar: bor sessiyalarning TTL'ini yangilaydi,
-        yangilarini ochadi. So'ralmagan/muddati o'tganlar o'zi to'xtaydi."""
-        now = time.time()
-        for req in live_requests:
-            code = (req.get("camera_code") or "").strip()
-            if not code:
-                continue
-            mode = req.get("mode") or "snapshot"
-            if mode == "auto":
-                mode = "snapshot"   # v1: auto = snapshot (video serverda aniq so'raladi)
-            ttl = float(req.get("ttl_s", 45))
-            with self._lock:
-                s = self._sessions.get(code)
-                if s is None or s.thread is None or not s.thread.is_alive():
-                    s = _Session(code, mode)
-                    self._sessions[code] = s
-                    s.until = now + ttl
-                    s.publish_url = self._publish_url(req)
-                    s.snapshot_interval = float(req.get("snapshot_interval_s", 3))
-                    s.thread = threading.Thread(
-                        target=self._run_session, args=(s,),
-                        name=f"live-{code}", daemon=True)
-                    s.thread.start()
-                else:
-                    s.until = now + ttl   # TTL yangilash — davom etaveradi
+    # ------------------------------------------------------------------ boshqaruv
+    def apply(self, config, live_stream):
+        """Heartbeat'dan chaqiriladi: server sozlamasiga qarab sessiyalarni
+        ochadi/yopadi. Bir xil holatda qayta chaqirilsa hech narsa qilmaydi."""
+        self._live_stream = live_stream or self._live_stream
+        enabled = bool(config.get("live_stream_enabled", False))
+        quality = str(config.get("video_quality") or "auto")
+        self._quality = quality
 
-    def active_summary(self):
-        """Heartbeat payload uchun: hozir nima uzatilyapti."""
+        if not enabled:
+            self.stop_all()
+            return
+
+        mode = "video" if quality in VIDEO_QUALITIES else "snapshot"
+        if mode == "video" and not self._push_base():
+            # MediaMTX sozlanmagan — server None berdi; snapshot'ga tushamiz
+            mode = "snapshot"
+
+        want = {}   # camera_id -> (mode, station)
+        for st in self.stations:
+            cfg = getattr(st, "cfg", {}) or {}
+            vid = cfg.get("video", {}) or {}
+            cam_id = vid.get("code") or cfg.get("camera_name") or cfg.get("name") or ""
+            if cam_id:
+                want[cam_id] = (mode, st)
+
         with self._lock:
-            return [{"camera_code": s.camera_code, "mode": s.mode}
-                    for s in self._sessions.values()
-                    if s.thread is not None and s.thread.is_alive()]
+            # ortiqcha/rejimi o'zgargan sessiyalarni yopamiz
+            for cam_id, s in list(self._sessions.items()):
+                tgt = want.get(cam_id)
+                if tgt is None or tgt[0] != s.mode:
+                    self._stop_session(s)
+                    del self._sessions[cam_id]
+            # yetishmayotganlarini ochamiz
+            for cam_id, (m, st) in want.items():
+                cur = self._sessions.get(cam_id)
+                if cur is not None and cur.thread is not None and cur.thread.is_alive():
+                    continue
+                s = _Session(cam_id, m)
+                self._sessions[cam_id] = s
+                s.thread = threading.Thread(
+                    target=self._run_session, args=(s, st),
+                    name=f"live-{cam_id}", daemon=True)
+                s.thread.start()
+
+    def state_summary(self):
+        """Heartbeat payload uchun: (live_streaming, current_quality)."""
+        with self._lock:
+            alive = [s for s in self._sessions.values()
+                     if s.thread is not None and s.thread.is_alive()]
+        if not alive:
+            return False, ""
+        if any(s.mode == "video" for s in alive):
+            return True, self._quality if self._quality in VIDEO_QUALITIES else "low"
+        return True, "snapshot"
 
     def stop_all(self):
         with self._lock:
             for s in self._sessions.values():
-                s.until = 0   # threadlar o'zi chiqadi
-                if s.proc is not None:
-                    try:
-                        s.proc.terminate()
-                    except Exception:
-                        pass
+                self._stop_session(s)
             self._sessions = {}
 
-    # ------------------------------------------------------------------ ichki
     @staticmethod
-    def _publish_url(req):
-        url = (req.get("publish_url") or "").strip()
-        tok = (req.get("publish_token") or "").strip()
-        if url and tok:
-            url += ("&" if "?" in url else "?") + "token=" + tok
-        return url
+    def _stop_session(s):
+        s.active = False
+        if s.proc is not None:
+            try:
+                s.proc.terminate()
+            except Exception:
+                pass
 
-    def _find_station(self, camera_code):
-        """camera_code bo'yicha stansiyani topadi. Kod plate yoki record
-        kameraga tegishli bo'lishi mumkin — jonli ko'rinish har doim shu
-        stansiyaning VIDEO kamerasidan beriladi (detektor buferi/SUB o'sha yerda)."""
-        for st in self.stations:
-            cfg = getattr(st, "cfg", {}) or {}
-            codes = {
-                (cfg.get("video", {}) or {}).get("code", ""),
-                (cfg.get("anpr", {}) or {}).get("code", ""),
-                cfg.get("camera_name", ""),
-            }
-            if camera_code in codes:
-                return st
-        return None
+    # ------------------------------------------------------------------ ichki
+    def _push_base(self):
+        """MediaMTX bazaviy manzili (creds bilan): push_url'dan yo'lni kesib."""
+        ls = self._live_stream or {}
+        push = (ls.get("push_url") or "").strip()
+        if not push:
+            return ""
+        return push.rsplit("/", 1)[0]
 
-    def _run_session(self, s):
-        st = self._find_station(s.camera_code)
-        if st is None:
-            print(f"[live] {s.camera_code}: mos stansiya topilmadi — e'tiborsiz")
-            return
-        print(f"[live] {s.camera_code}: {s.mode} sessiya boshlandi")
+    def _push_url_for(self, camera_id):
+        ls = self._live_stream or {}
+        base = self._push_base()
+        tpl = (ls.get("path_template") or "").strip()
+        if not base:
+            return ""
+        if tpl and "{camera_id}" in tpl:
+            return f"{base}/{tpl.format(camera_id=camera_id)}"
+        return f"{base}/{camera_id}"
+
+    def _run_session(self, s, st):
+        print(f"[live] {s.camera_id}: {s.mode} boshlandi")
         try:
-            if s.mode == "video" and s.publish_url:
+            if s.mode == "video":
                 self._video_loop(s, st)
             else:
                 self._snapshot_loop(s, st)
         finally:
-            with self._lock:
-                if self._sessions.get(s.camera_code) is s:
-                    del self._sessions[s.camera_code]
-            print(f"[live] {s.camera_code}: sessiya tugadi")
+            print(f"[live] {s.camera_id}: to'xtadi")
 
     # ---------------------------------------------------- snapshot rejimi
     def _snapshot_loop(self, s, st):
         if requests is None:
             return
-        snap_url = f"{self.url}/api/local/live-snapshot"
-        while time.time() < s.until:
-            # USTUVORLIK: hodisa navbati bo'sh bo'lmasa — kadr yubormay turamiz
+        snap_url = f"{self.url}/api/agent/live-snapshot"
+        headers = {"Authorization": f"Bearer {self.token}",
+                   "X-Camera-Id": s.camera_id,
+                   "Content-Type": "image/jpeg"}
+        while s.active:
             try:
                 busy = db.pending_count() > 0
             except Exception:
@@ -164,49 +183,51 @@ class LiveManager:
                         jpg = None
                 if jpg:
                     try:
-                        requests.post(
-                            snap_url, data=jpg, timeout=10,
-                            headers={"X-API-Key": self.api_key,
-                                     "X-Camera-Code": s.camera_code,
-                                     "Content-Type": "image/jpeg"})
+                        requests.post(snap_url, data=jpg, headers=headers, timeout=10)
                     except Exception:
                         pass   # tarmoq xatosi — keyingi kadrgacha jim
-            time.sleep(max(1.0, s.snapshot_interval))
+            time.sleep(SNAPSHOT_INTERVAL_S)
 
     # ---------------------------------------------------- video rejimi
     def _video_loop(self, s, st):
         rtsp = getattr(st, "rtsp_sub", "") or getattr(st, "rtsp", "")
         if not rtsp:
-            print(f"[live] {s.camera_code}: RTSP manzil yo'q — video rejim ishlamaydi")
+            print(f"[live] {s.camera_id}: RTSP manzil yo'q")
             return
         ff = media.ffmpeg_exe()
         if not ff:
-            print(f"[live] {s.camera_code}: ffmpeg topilmadi")
+            print(f"[live] {s.camera_id}: ffmpeg topilmadi")
             return
-        while time.time() < s.until:
-            # hodisa navbati bo'shashini kutamiz — event trafigi ustuvor
+        push = self._push_url_for(s.camera_id)
+        if not push:
+            print(f"[live] {s.camera_id}: MediaMTX manzili yo'q")
+            return
+        while s.active:
+            # hodisa navbati ustuvor — bo'shashini kutamiz (maks 60s)
             waited = 0
-            while db.pending_count() > 0 and time.time() < s.until and waited < 60:
+            while s.active and waited < 60:
+                try:
+                    if db.pending_count() == 0:
+                        break
+                except Exception:
+                    break
                 time.sleep(QUEUE_WAIT_S)
                 waited += QUEUE_WAIT_S
-            if time.time() >= s.until:
+            if not s.active:
                 break
             cmd = [ff, "-nostdin", "-loglevel", "error",
                    "-rtsp_transport", "tcp", "-i", rtsp,
                    "-c", "copy", "-an",
-                   "-f", "rtsp", "-rtsp_transport", "tcp", s.publish_url]
+                   "-f", "rtsp", "-rtsp_transport", "tcp", push]
             try:
                 s.proc = subprocess.Popen(
                     cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except Exception as e:
-                print(f"[live] {s.camera_code}: ffmpeg ishga tushmadi: {e}")
+                print(f"[live] {s.camera_id}: ffmpeg xatosi: {e}")
                 return
-            # TTL tugashini yoki jarayon o'limini kutamiz
-            while time.time() < s.until:
-                if s.proc.poll() is not None:
-                    break   # ffmpeg o'ldi — qayta uriniladi
+            while s.active and s.proc.poll() is None:
                 time.sleep(1)
-            if s.proc.poll() is None:
+            if s.proc.poll() is None:   # active=False bo'ldi — to'xtatamiz
                 try:
                     s.proc.terminate()
                     s.proc.wait(timeout=5)
@@ -215,6 +236,6 @@ class LiveManager:
                         s.proc.kill()
                     except Exception:
                         pass
-                break   # TTL tugadi — chiqamiz
-            time.sleep(FFMPEG_RETRY_S)
-        s.proc = None
+            s.proc = None
+            if s.active:
+                time.sleep(FFMPEG_RETRY_S)   # ffmpeg o'ldi — qayta urinamiz
