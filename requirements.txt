@@ -1,0 +1,10 @@
+requests
+pyserial
+opencv-python
+Pillow
+PyQt6
+ultralytics   # chiziq-kesish detektori (yo'nalish + video trigger); YOLO modelini o'zi yuklaydi
+
+# Video siqish (H.264) uchun ffmpeg ham kerak (pip emas, tizimga o'rnatiladi):
+#   Windows: https://www.gyan.dev/ffmpeg/builds/  (ffmpeg.exe PATH ga qo'shiladi)
+#   ffmpeg bo'lmasa ham dastur ishlaydi — video faqat o'lchami kichraytiriladi.

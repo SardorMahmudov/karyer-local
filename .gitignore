@@ -1,0 +1,23 @@
+# Maxfiy va lokal holat
+config.json
+config.json.bak-*
+*.db
+*.db-shm
+*.db-wal
+
+# Media va loglar
+videos/
+captures/
+images/
+*.log
+scale_capture_log.txt
+
+# Build
+build/
+dist/
+__pycache__/
+*.pyc
+
+# Katta binarlar
+ffmpeg/
+yolov8n.pt
