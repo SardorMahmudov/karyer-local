@@ -54,6 +54,7 @@ class LiveManager:
         live = cfg.get("live", {}) or {}
         self.url = (server.get("url") or "").rstrip("/")
         self.token = (live.get("agent_token") or "").strip()
+        self.quarry_code = (cfg.get("quarry_id") or "").strip()
         self.stations = stations
         self._sessions = {}       # camera_id -> _Session
         self._lock = threading.Lock()
@@ -148,7 +149,12 @@ class LiveManager:
             return ""
         if tpl and "{camera_id}" in tpl:
             return f"{base}/{tpl.format(camera_id=camera_id)}"
-        return f"{base}/{camera_id}"
+        # Serverdagi ma'lum bug: template'dagi {camera_id} placeholder ham
+        # sanitizatsiyadan o'tib '_camera_id_' bo'lib keladi. Yo'lni serverning
+        # services/live.py stream_path() mantig'i bilan O'ZIMIZ yasaymiz:
+        safe = "".join(c if c.isalnum() else "_"
+                       for c in f"{self.quarry_code}_{camera_id}").lower()
+        return f"{base}/karyer_{safe}"
 
     def _run_session(self, s, st):
         print(f"[live] {s.camera_id}: {s.mode} boshlandi")
