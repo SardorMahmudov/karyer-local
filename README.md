@@ -105,3 +105,5 @@ push (manzil serverdagi configdan keladi). Hodisa navbati bo'sh bo'lmaguncha
 live kutadi (hodisa > jonli — o'zgarmas qoida).
 To'liq tahlil: `..\MUVOFIQLIK-VA-LIVE-STREAM.md` (server o'z variantini
 amalga oshirdi — doc.txt kontrakti; ushbu kod aynan o'shanga mos).
+
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJiN2UwNzk1Yi1kZjEzLTQ1MjUtOTc5Yy04OGUzNmRiNDAxMDMiLCJpYXQiOjE3ODcxMjk2NTksImV4cCI6MTc4NzM4ODg1OSwidHlwZSI6InByb3Zpc2lvbiIsInVybCI6Imh0dHBzOi8vYXBpLnJhcWFtbGkta2FyeWVyLnV6In0.mlD12_KSIknuMfNugGFkv96bHIylEcXpcpb8q5bfm24
