@@ -106,4 +106,4 @@ live kutadi (hodisa > jonli — o'zgarmas qoida).
 To'liq tahlil: `..\MUVOFIQLIK-VA-LIVE-STREAM.md` (server o'z variantini
 amalga oshirdi — doc.txt kontrakti; ushbu kod aynan o'shanga mos).
 
-KRY_bp4Xji44t0i1sRC1WY4F-WNqDMl09FK8Kxz2nq6xdxc
+KRY_w1mn_GcYTPtLAuxc82XoihA1BCP8OSclBfBKI8pIJQ4
